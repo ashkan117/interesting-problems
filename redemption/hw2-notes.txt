@@ -1,0 +1,221 @@
+#+title: Augmenting Functions with Higher Order Functions
+#+roam_alias: "CS 131 Homework 2"
+#+roam_tag: "Eggert"
+
+
+* Intro
+  When we're working with functions we're used to seeing data changed. Maybe with a more functional language we're used to seeing [[file:20200612161513-higher_order_functions.org][Higher Order Functions]]. For example with [[file:20200629151821-map_function.org][Map Function]] it's pretty intuitive to pass in a function and map the list to another data type. This problem is especially difficult since the solution uses a function were the function actually changes as you perform the recursive work.
+
+* TLDR
+- With higher order functions you can pass in a function and by updating the function as you recurse through a problem you can save your place in the recursive tree and pick it up later when you use the function down the line. (Continuations,Acceptor)
+- By having a function to tell you when you're done you have made a function that has a very flexible ending point (Continuations, Acceptor)
+- A matcher calls the acceptor on the tail. We can update the acceptor to accept the tail and instead of calling the acceptor right away do more work.
+- We go down the rabbit hole and if it's valid we want to take the rest of the rule and the tail that we get from the rabbit hole and continue the work again. We must save our place so that all the way down in the rabbit hole we can just jump back to the right point in time.
+- We see how powerful currying being able to give you a function that you're able to adapt and update and finally call it whenever you want when you're ready
+
+* Acceptor case study (Addressing some arbitrariness)
+** Power behind Acceptors (Continuations)
+  This has the vague feeling of being involved with [[file:20200819093605-continuation_passing_style.org][Continuation Passing Style]] since *an acceptor notifies the end of the recursion*. This may not seem like umch but it does make the overall program much more powerful. This acceptor as the name applies notifies when we accept a match. It essentially is a function that you call when you think you're done and it'll tell you your valid or not. If we avoided making this function the thing we'd likely do is make a function that matches the empty suffix and that would've been fine. However, by giving the responsibility of ending the function to this acceptor we could end this function at any arbitrary point whether we matched fully or just found a match. That might sound like nothing but it is. We don't need to make a new function with all the same workings, *we just make a more general function*
+** Suffix weirdness
+   This whole time working with the problem and I never questioned why we were working with the suffix. Why not just give it the match and then choose based off that. This is honestly the smallest part of the question that makes the largest difference. The entire reason we pass the acceptor the suffix/tail of the match is so that our continuation logic later works. Will come to this later.
+
+* Building matchers
+** And Matcher
+  A matcher is simply a function that tries to match two things and if it's successful then it applies the acceptor to the tail. Come back to this definition often. The idea is that we can chain simple matchers to build into becoming a solution.
+
+let match_head nt frag accept =
+  match frag with
+    | [] -> None
+    | n::tail -> if n == nt then accept tail else None
+
+Match head is the simple form of this problem. It just matches the head of a fragment with an item.
+
+let append_matchers matcher1 matcher2 frag accept =
+  matcher1 frag (fun frag1 -> matcher2 frag1 accept)
+
+This iterates through a rule [T"1"; T "!"]. If a list of symbols works we're done. The issue is it works with a list of terminals since we want to compare the head of the fragment to a terminal and not a nonterminal.
+** Or matcher
+We don't have a single rule to iterate through we have a list of rules. If [N Term; N Binop; N Expr] doesn't work we need to try [N Term]
+
+let rec make_or_matcher make_a_matcher = function
+  | [] -> match_nothing
+ | head::tail ->
+      let head_matcher = make_a_matcher head
+      and tail_matcher = make_or_matcher make_a_matcher tail
+      in fun frag accept ->
+	   let ormatch = head_matcher frag accept
+	   in match ormatch with
+		| None -> tail_matcher frag accept
+		| _ -> ormatch
+
+** Best of both worlds
+   We want to see if a rule works but what if a rule has a nonterminal? Then we need to go through the or matcher with the nonterminal *BUT the acceptor must change! If we find a match then we want to continue the work with the prefix that's passed and the rest of the rule.
+   rule = [N Expr; T "1"]   frag = ["1"; "1"]
+  We go down the rabbit hole with N Expr and if it's valid we want to take the rest of the rule and the tail that we get from the rabbit hole and continue the work again. We must save our place so that all the way down in the rabbit hole we can just jump back to the right point in time. In this case 
+  rule = [T "1"] frag = ["1"]
+
+| (N nonterminal) -> make_or_matchers get_rules (get_rules nonterminal) nonterminal (make_appended_matchers get_rule rule_tail acceptor) frag derivation
+
+We save our place with the make_appended_matchers as our new acceptor and give it the rule_tail knowing that later on we'll get the suffix called on it to start continuing the work.
+   
+** Acceptor must change (Acceptor matcher relationship)
+ 
+What if we wanted to match two elements? Let's say matcher1 matches "$" and matcher2 matches "!". The way we can do this is use matcher1. This will either result in a fail with a None or it will succeed and call acceptor on the tail. The key here is that matcher2 wants to continue on the rest of the fragment. To make things concrete let's look at an example. 
+
+append_matchers matcher1 matcher2 ["$"; "1"; "++"; "-"; "2"].
+High level is we want matcher1 to work with the fragment when it's ["$"; "1"; "++"; "-"; "2"] and matcher2 to do so with . ["1"; "++"; "-"; "2"]
+The way we can actually do this is very subtle. It's by changing the acceptor function. The acceptor is a function that is passed the tail. We want matcher2 to be passed the tail. A matcher ultimately calls acceptor so in a way we're passing responsibility of calling acceptor to the matcher. So since matcher2 needs the tail from matcher1 we change the acceptor for matcher1 to include matcher2. 
+
+let make_appended_matchers make_a_matcher ls =
+  let rec mams = function
+    | [] -> match_empty
+    | head::tail -> append_matchers (make_a_matcher head) (mams tail)
+  in mams ls
+
+This function is a little easier to understand at high level but how it works is a little harder. Continuously match the head of the fragment to a matcher and do so recursively. Notice that we need this match_empty matcher. Once we reach this matcher it means just actually call the acceptor on fragment.
+
+Again the key is knowing that this works because we are chaining together new acceptors as we solve this problem.
+
+* Putting everything together
+** Intuition
+   How do we end up finding a match? Well we need to go through all the rules and see if any of them are valid. We start with the starting symbol and see what rules this matches with 
+         Expr ->
+         [[N Term; N Binop; N Expr];
+          [N Term]] 
+
+Then we iterate through each rule of the rules and see if one matches everything. If it has a terminal we try to match it. If it's a nonterminal we recursively go inside. Since make_matcher cares about the acceptors result and make_parser cares more about the result with the structure we make a more general problem that returns the result of the acceptor and the path we took to find the solution. 
+
+** Why the Backtracking is unusual (Continuations are required)
+   This [[file:20200621172256-backtrack.org][backtracking]] solution to this problem is surprisingly. When do we return? What do we return when we return? This was the hardest part of the problem and if you're not comfortable with the idea of updating the acceptor as you go down the search space it's a doozy. The reason normal backtracking won't work is because we don't return anything once we're done. *We call on the acceptor to decide but more importantly we give acceptor the tail of what we matched so far.* Knowing this fact allows you to slowly mull over how the solution works. Each Nonterminal will eventually lead you down to a list of Terminals one way or another but it could match with any number of the fragments. Instead of worrying about that will just say give us what you didn't match. This is where the suffix comes in again. We ask it give us what you didn't match, if any, and will pick up the work from there.  
+
+** Picking up the work (Saving your place/state in recursion)
+   Following from the above how do we say will finish the rest of the work? Let's say our starting symbol is Expr and we're seeing if [N Term; N Binop; N Expr] is a match. Once we go down the rabbit whole with N Term we lose our place. We forget that we want to see if N Binop and N Expr match as well. Again this is where the acceptor comes in. The acceptor takes the remaining work to do if we're not done. Before we even investigate N Term we know that whatever that matches with we want to see if this works with [N Binop; N Expr]. So we change the acceptor from the original acceptor to one that picks up were the first Nonterminal left off and then we go investigate if both N Binop and N Expr work. The very last acceptor called will be the original but along the way we work with new ones to help us. We save our state before we launch a really complicated and recursive traversal.
+
+
+
+* Prework Scratch
+(* https://github.com/zhehaowang/ucla-cs131/blob/master/hw2/hw2.ml *)
+(* 
+ Our goal is to make matcher and then use it to build make parser. 
+ make matcher with accept_empty could be the way 
+
+ Or make make parser first then use it to build make matcher 
+ this can be done by passing using parse tree leaves.
+
+ Which one is easier?
+  In order to know this we need to see what's the relationship between the two and how we can use the other or possibly just use a more general function to help us
+
+
+let awkish_grammar =
+  (Expr,
+   function
+     | Expr ->
+         [[N Term; N Binop; N Expr];
+          [N Term]]
+     | Term ->
+         [[N Num];
+    [N Lvalue];
+    [N Incrop; N Lvalue];
+    [N Lvalue; N Incrop];
+    [T"("; N Expr; T")"]]
+     | Lvalue ->
+         [[T"$"; N Expr]]
+     | Incrop ->
+         [[T"++"];
+    [T"--"]]
+     | Binop ->
+         [[T"+"];
+    [T"-"]]
+     | Num ->
+         [[T"0"]; [T"1"]; [T"2"]; [T"3"]; [T"4"];
+    [T"5"]; [T"6"]; [T"7"]; [T"8"]; [T"9"]])
+
+let test0 =
+  ((make_matcher awkish_grammar accept_all ["ouch"]) = None)
+  There is no way of matching just a word or any words for that example so no match
+
+let test1 =
+  ((make_matcher awkish_grammar accept_all ["9"])
+   = Some []
+
+   It is possible to match a num Since Expr -> Term -> Num. So we find a match resulting in ["9"] and the suffix is the empty list since we matched everything
+    accept_all accepts every suffix so we're done.
+    Some []
+
+let test2 =
+  ((make_matcher awkish_grammar accept_all ["9"; "+"; "$"; "1"; "+"])
+   = Some ["+"]
+
+This one is a little more interesting Expr -> [Term, Binop, Expr]. 
+We explore the Term and see if this has a match 
+Term -> Num. So we found a match for 9
+Second in the list is Binop. Binop -> +. 
+Last one in the list is Expr which matches to Term.
+  we eplore Term which leads us to LValue. Term -> LValue
+  Lvalue is a [T"$"; N Expr] so now we need to explore Expr again
+  Expr -> Num 
+
+  We can get a general feeling that we need to use mutual recursion again. We start exploring with the starting symbol and see if the corresponding list has any matches. So we continously bounce back between iterating through a list and then actually exploring options in those lists.
+
+  So we have found a match for 9 + $ 1 so our suffix becomes +
+  We see that if we accept all suffixes we accept the [+] suffix. However, if we had accept_empty we would find no matches for the 
+
+
+
+let test6 =
+  ((make_parser awkish_grammar small_awk_frag)
+   = Some (Node (Expr,
+     [Node (Term,
+      [Node (Lvalue,
+             [Leaf "$";
+        Node (Expr,
+              [Node (Term,
+               [Node (Num,
+                [Leaf "1"])])])]);
+       Node (Incrop, [Leaf "++"])]);
+      Node (Binop,
+      [Leaf "-"]);
+      Node (Expr,
+      [Node (Term,
+             [Node (Num,
+              [Leaf "2"])])])])))
+
+  Make parser does something really similar but it returns its match as a tree 
+
+
+  So what's the similarity? They both find matches meaning that the traversal is the same but the values they return are not the same.
+  One finds the match but wants to apply an acceptor to the suffix
+  The other wants to get the match and build a tree.
+  To decide which one is best we need to decide which information is most intuitive 
+
+  Since the assignment requires parse_tree_leaves it makes sense to make make_parser first since it contains more information.
+  So finding a match is pretty hard. Finding a match that returns a tree is even harder so let's just worry about finding a match. Let's follow small_awk_frag = ["$"; "1"; "++"; "-"; "2"] case. Remember that a match means the first possible one.
+  So a grammer gives us the starting nonterminal. So we need to explore the starting symbol. Expr -> a list of list. We need to explore each of those lists and see if any is fruitful.
+         [[N Term; N Binop; N Expr]
+          [N Term]] 
+          Let's start with the first [N Term; N Binop, N Expr] This is a list of symbols once we reach a Nonterminal we need to explore it.
+     Term ->  [[N Num]; [N Lvalue];   [N Incrop; N Lvalue];  [N Lvalue; N Incrop]; 	  [T"("; N Expr; T")"]]
+     notice that this again gives us a hint that we need to use mutual recursion. We're bouncing back between a [symbols] [[symbols]]
+     [N Num] gives us Num -> all numbers no match we go back and try the rest of the items from Term
+     [N Lvalue] -> [[T"$"; N Expr]]
+     [T"$"; N Expr] -> If $ matches which it does move on the rest of the fragment but finish of the current search space
+     [N Expr] -> [[N Term; N Binop; N Expr]
+          [N Term]] 
+
+     Eventually we find Term -> Num so we found a match for $ 1 so far.
+     All this work means we just found a match for Term so its Binop time.
+     Binop -> doesn't work 
+
+     Eventually rinse and repeating we find 
+     Term Binop Expr works 
+     Term -> [Lvalue; Incrop] -> $ 1 ++
+     Binop -> - 
+     Expr -> Term -> Num -> 2
+
+     How do we actually code this? For me the mutual recursion is harder than the backtracking since its easy to confuse yourself with the types you're playing around with.
+     So we really have two data structures we're iterating through a [[symbol]] and [symbol]. It's important to note that we get the [[symbol]] by passing a nonterminal to the nonterm_to_prod function
+       How do we back track if we are at the [[]] that means we went through all the possibilities and they were fruitless.
+      Likewise when we go through the [symbol] and we eventually are looking at an empty list it means that we didn't find a match.
+ *)
+
+ 

@@ -1,0 +1,12 @@
+What should we do if we found a match
+
+let small_awk_frag = ["$"; "1"; "++"; "-"; "2"]
+
+LValue = [$ Expr]
+frag = ["1"; "++"; "-"; "2"]
+Let's say we found $ 
+
+If we then go to Expr -> Num -> 0
+This wrongly says we tried 0 and its no good.
+When iterating through the list of lists we need to somehow demonstrate that we found a match.
+

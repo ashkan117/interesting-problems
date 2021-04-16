@@ -1,0 +1,76 @@
+#+title: Complicated Recursion with Grammars
+#+roam_alias: "Mutual Recursion connection with data" "CS 131 Homework 1"
+#+roam_tag: "Eggert"
+
+* Origin
+This comes from Hw1 from good old Prof Eggert. http://web.cs.ucla.edu/classes/fall19/cs131/hw/hw1.html. It is insanely complicated and to have this as your first project for a functional language is straight up cruel and unusual. It contains some really complicated ideas that only after tinkering with Functional Programming language latter did I have the courage to revisit this problem.
+
+* Concepts
+[[file:20200903161624-mutual_recursion.org][Mutual Recursion]]
+[[file:20200903161635-functional_programming.org][Functional Programming]]
+[[file:20200612161513-higher_order_functions.org][Higher Order Functions]]
+[[file:20200903150306-comptuted_fixed_point_function.org][Computed Fixed Point Function]]
+[[file:20200612160645-currying.org][Currying]]
+[[file:20200903174418-filter_function.org][Filter Function]]
+
+* Solution
+** Intuition
+   The intuition to the solution is not incredibly difficult. If we know which nonterminals are reachable we can filter them out from the grammar. However solving this is still extremely difficult since finding the reachable nonterminals takes a couple leaps of faith.
+** Mutual Recursion
+   Mutual Recursion comes into play due to the structure of the grammar.
+
+type ('nonterminal, 'terminal) symbol =
+  | N of 'nonterminal
+  | T of 'terminal
+
+ type awksub_nonterminals =
+  | Expr | Lvalue | Incrop | Binop | Num  
+
+let awksub_rules =
+   [Expr, [T"("; N Expr; T")"];
+    Expr, [N Num];
+    Expr, [N Expr; N Binop; N Expr];
+    Expr, [N Lvalue];
+    Expr, [N Incrop; N Lvalue];
+    Expr, [N Lvalue; N Incrop];
+    Lvalue, [T"$"; N Expr];
+    Incrop, [T"++"];
+    Incrop, [T"--"];
+    Binop, [T"+"];
+    Binop, [T"-"];
+    Num, [T"0"];
+    Num, [T"1"];
+    Num, [T"2"];
+    Num, [T"3"];
+    Num, [T"4"];
+    Num, [T"5"];
+    Num, [T"6"];
+    Num, [T"7"];
+    Num, [T"8"];
+    Num, [T"9"]]
+
+1. The rules are defined as a list of pairs.
+2. The pairs are composed of a awksub_nonterminal and a list of symbols. 
+   - A nonterminal is specifically Expr,LValue...Num in this case
+   - The symbol list is composed of a Terminal followed by a string and a nonterminal being a awksub_nonterminal
+   - You can think of the N and T being [[file:20200724085450-type_constructor.org][Type Constructors]].
+   - This limits the symbol being used to being of symbol type limited to being (awksub_nonterminal,string)
+
+Our goal is to go through the rules and whenever we see a nonterminal we haven't seen before go through it's [symbols] and add any nonterminal that we haven't seen before
+1. Go through the nonterminals we can reach so far (starts with [starting_symbol])
+2. Go through the [symbols] of the of the nonterminals we can reach and add the new ones (nonterminals previously unknown as reachable)
+*Since we want to iterate through the rules which is of type [nonterminal,[symbol]] and we want iterate through a [symbols] we need to constantly swap back and forth between which form we're iterating. Hence we need mutual recursion.*
+** Computed Fixed Point
+   We finally understand that we need computed fixed point once we realize that order matters since when we know a nonterminal is reachable matters. Let's we move Expr, [N Num]; to be the last in the list. We notice that this small change means we miss all the numbers. *Once a new nonterminal is known as reachable we need to repeat our work. We only know that we're done once we repeated the work and nothing changes. In other words we want to perform this function multiple times until the ouput is the same from the output. Hence we need Computed Fixed Point* 
+** Currying and Higher Order Functions
+   let filter_reachable (start,prod) = 
+       let reachable = computed_fixed_point equal_sets (reachable_productions prod) [start]
+
+- Higher order since we're passing reachable_productions
+- Currying since reachable_productions really takes two arguments but we're passing that in later through the high order function. *Notice that by using higer order functions we're able to simplify the problem a bit. Reachable productions just worries about finding the reachable nonterminals and then we're using a very general function like computed fixed point to abstract away the concept of applying a function until its output matches its input*
+
+
+* Conclusion
+  The reason this is such a great question is that it flexes the functional way of thinking. The solution to this problem translates well to Functional Languages but not Imperative ones. Apply a function multiple times until the input = the output sounds hard but is actually easy to write recursively. Bounce back and forth between a nested data structure sounds really complicated until you realize mutual recursion is exactly what this is. Filtering the results is a classic example of the filter function from functional programming. *Key point is with functional programming you must understand the relationship between concepts at a high level. The coding is not the hard part* Learning a functional programming language makes you a better programmer because it changes the way you think about code. The focus no longer matters on coding the steps but really understanding the holistic approach. The better you understand the problem the less you need to code. It really forces you to take a step back and not worry about code but worry instead about the problem and the relationships between concepts and problems. 
+h
+
